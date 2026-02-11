@@ -2,10 +2,18 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import type { OrdiniFilters } from './useOrdini'
 
+function toYMDLocal(d: Date): string {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
 function lastDayOfMonth(year: number, month: string): string {
   const m = parseInt(month, 10)
   const d = new Date(year, m, 0)
-  return d.toISOString().slice(0, 10)
+  // NON usare toISOString(): può slittare di 1 giorno per timezone
+  return toYMDLocal(d)
 }
 
 function getDateRange(filters: OrdiniFilters): { dataInizio: string; dataFine: string } | null {
@@ -14,14 +22,22 @@ function getDateRange(filters: OrdiniFilters): { dataInizio: string; dataFine: s
   if (periodMode === 'anno') {
     const y = parseInt(selectedYear, 10)
     if (Number.isNaN(y)) return null
-    return { dataInizio: `${y}-01-01`, dataFine: `${y}-12-31` }
+    const fullYearEnd = `${y}-12-31`
+    if (dateStart && dateEnd && dateEnd !== fullYearEnd) {
+      return { dataInizio: dateStart, dataFine: dateEnd }
+    }
+    return { dataInizio: `${y}-01-01`, dataFine: fullYearEnd }
   }
   if (periodMode === 'mese') {
     const y = parseInt(selectedYear, 10)
     if (Number.isNaN(y) || !selectedMonth) return null
+    const fullMonthEnd = lastDayOfMonth(y, selectedMonth)
+    if (dateStart && dateEnd && dateEnd !== fullMonthEnd) {
+      return { dataInizio: dateStart, dataFine: dateEnd }
+    }
     return {
       dataInizio: `${y}-${selectedMonth}-01`,
-      dataFine: lastDayOfMonth(y, selectedMonth),
+      dataFine: fullMonthEnd,
     }
   }
   return { dataInizio: dateStart, dataFine: dateEnd }

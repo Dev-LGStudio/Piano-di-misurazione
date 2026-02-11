@@ -16,10 +16,18 @@ export type OrdiniFilters = {
   dateEnd: string
 }
 
+function toYMDLocal(d: Date): string {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
 function lastDayOfMonth(year: number, month: string): string {
   const m = parseInt(month, 10)
   const d = new Date(year, m, 0)
-  return d.toISOString().slice(0, 10)
+  // NON usare toISOString(): può slittare di 1 giorno per timezone
+  return toYMDLocal(d)
 }
 
 /** Escapa % e _ per ilike; usiamo poi %pattern% per includere eventuali spazi in DB. */
@@ -56,41 +64,58 @@ export function useOrdini(filters: OrdiniFilters) {
     setError(null)
 
     const shopPattern = '%' + escapeForIlike(selectedShop.trim()) + '%'
-    let query = supabase
-      .from('ordini')
-      .select(COLONNE_ORDINI)
-      .ilike('shop', shopPattern)
+    const PAGE_SIZE = 1000
 
-    if (periodMode === 'anno') {
-      const y = parseInt(selectedYear, 10)
-      if (!Number.isNaN(y)) {
-        query = query
-          .gte('data_ordine', `${y}-01-01`)
-          .lte('data_ordine', `${y}-12-31`)
+    const buildBaseQuery = () => {
+      let query = supabase
+        .from('ordini')
+        .select(COLONNE_ORDINI)
+        .ilike('shop', shopPattern)
+
+      if (periodMode === 'anno') {
+        const y = parseInt(selectedYear, 10)
+        if (!Number.isNaN(y)) {
+          query = query
+            .gte('data_ordine', `${y}-01-01`)
+            .lte('data_ordine', `${y}-12-31`)
+        }
+      } else if (periodMode === 'mese') {
+        const y = parseInt(selectedYear, 10)
+        if (!Number.isNaN(y) && selectedMonth) {
+          const start = `${y}-${selectedMonth}-01`
+          const end = lastDayOfMonth(y, selectedMonth)
+          query = query.gte('data_ordine', start).lte('data_ordine', end)
+        }
+      } else {
+        query = query.gte('data_ordine', dateStart).lte('data_ordine', dateEnd)
       }
-    } else if (periodMode === 'mese') {
-      const y = parseInt(selectedYear, 10)
-      if (!Number.isNaN(y) && selectedMonth) {
-        const start = `${y}-${selectedMonth}-01`
-        const end = lastDayOfMonth(y, selectedMonth)
-        query = query.gte('data_ordine', start).lte('data_ordine', end)
-      }
-    } else {
-      query = query.gte('data_ordine', dateStart).lte('data_ordine', dateEnd)
+
+      return query
     }
 
-    query.then(({ data, error: err }) => {
-      if (cancelled) return
-      setLoading(false)
-      if (err) {
-        setError(err.message)
-        setOrdini([])
-        return
+    ;(async () => {
+      const all: Ordine[] = []
+      let from = 0
+
+      while (true) {
+        const { data, error: err } = await buildBaseQuery().range(from, from + PAGE_SIZE - 1)
+        if (cancelled) return
+        if (err) {
+          setError(err.message)
+          setOrdini([])
+          setLoading(false)
+          return
+        }
+        const batch = (data as Ordine[]) ?? []
+        all.push(...batch)
+        if (batch.length < PAGE_SIZE) break
+        from += PAGE_SIZE
       }
-      const raw = (data as Ordine[]) ?? []
-      const filtered = raw.filter((o) => shopMatches(o.shop, selectedShop))
+
+      const filtered = all.filter((o) => shopMatches(o.shop, selectedShop))
       setOrdini(filtered)
-    })
+      setLoading(false)
+    })()
 
     return () => {
       cancelled = true

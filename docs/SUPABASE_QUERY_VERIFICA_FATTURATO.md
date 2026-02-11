@@ -1,6 +1,6 @@
 # Query Supabase per verificare il fatturato (stessa logica dell’app)
 
-Esegui nel **SQL Editor** di Supabase per controllare cosa restituisce il DB con la **stessa logica** della dashboard (shop, anno, solo ordini “Concluso”, somma `conversione_euro` con fallback su `totale_tasse_escluse`).
+Esegui nel **SQL Editor** di Supabase per controllare cosa restituisce il DB con la **stessa logica** della dashboard (shop, anno, solo ordini “Concluso”, somma `conversione_euro`).
 
 ---
 
@@ -46,11 +46,11 @@ as $$
     select
       o.id,
       o.id_cliente,
-      coalesce(o.conversione_euro, o.totale_tasse_escluse, 0) as euro_usato
+      coalesce(o.conversione_euro, 0) as euro_usato
     from public.ordini o
     where lower(trim(o.shop)) = lower(trim(p_shop))
-      and o.data_ordine >= p_data_inizio
-      and o.data_ordine <= p_data_fine
+      and o.data_ordine::date >= p_data_inizio
+      and o.data_ordine::date <= p_data_fine
       and exists (
         select 1 from concluso_nomi c
         where lower(trim(c.nome::text)) = lower(trim(coalesce(o.stato_ordine, '')))
@@ -91,7 +91,7 @@ In cima alla query ci sono due variabili (usa **Replace** nel editor):
 ## 2. Query da incollare e eseguire
 
 ```sql
--- Stessa logica dell'app: shop (trim+lower), anno, solo "Concluso", fatturato da conversione_euro/totale_tasse_escluse
+-- Stessa logica dell'app: shop (trim+lower), anno, solo "Concluso", fatturato da conversione_euro
 do $$
 declare
   p_shop text := 'PAULATO';   -- cambia con il tuo shop
@@ -113,7 +113,7 @@ begin
       o.conversione_euro,
       o.totale_tasse_escluse,
       o.id_cliente,
-      coalesce(o.conversione_euro, o.totale_tasse_escluse, 0) as euro_usato
+      coalesce(o.conversione_euro, 0) as euro_usato
     from public.ordini o
     where lower(trim(o.shop)) = lower(trim(p_shop))
       and o.data_ordine >= (p_anno || '-01-01')::date
@@ -159,7 +159,7 @@ ordini_conclusi as (
     o.stato_ordine,
     o.conversione_euro,
     o.totale_tasse_escluse,
-    coalesce(o.conversione_euro, o.totale_tasse_escluse, 0) as euro_usato
+    coalesce(o.conversione_euro, 0) as euro_usato
   from public.ordini o
   where lower(trim(o.shop)) = lower(trim('PAULATO'))
     and o.data_ordine >= '2025-01-01'
@@ -191,7 +191,7 @@ select
   o.stato_ordine,
   o.conversione_euro,
   o.totale_tasse_escluse,
-  coalesce(o.conversione_euro, o.totale_tasse_escluse, 0) as euro_usato
+  coalesce(o.conversione_euro, 0) as euro_usato
 from public.ordini o
 where lower(trim(o.shop)) = lower(trim('PAULATO'))
   and o.data_ordine >= '2025-01-01'

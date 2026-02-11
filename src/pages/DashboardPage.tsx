@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Navbar } from '../components/Navbar'
+import { FatturatoChart } from '../components/FatturatoChart'
 import { useAuth } from '../context/AuthContext'
 import { useProfiloContext } from '../context/ProfiloContext'
 import { useAvailablePeriods } from '../hooks/useAvailablePeriods'
 import { useKpisPeriodo } from '../hooks/useKpisPeriodo'
-import { type PeriodMode, useOrdini } from '../hooks/useOrdini'
-import { useStatiOrdini } from '../hooks/useStatiOrdini'
-import type { Ordine } from '../types/database'
+import { type PeriodMode } from '../hooks/useOrdini'
+import { useFatturatoChartAgg } from '../hooks/useFatturatoChartAgg'
 
 function formatEuro(n: number): string {
   return new Intl.NumberFormat('it-IT', {
@@ -17,37 +17,11 @@ function formatEuro(n: number): string {
   }).format(n)
 }
 
-function computeKpis(
-  ordiniConclusi: Ordine[]
-): {
-  fatturato: number
-  volumeOrdini: number
-  ticketMedio: number
-  clientiRicorrenti: number
-} {
-  const fatturato = ordiniConclusi.reduce((s, o) => {
-    const euro =
-      o.conversione_euro != null
-        ? Number(o.conversione_euro)
-        : o.totale_tasse_escluse != null
-          ? Number(o.totale_tasse_escluse)
-          : 0
-    return s + (Number.isFinite(euro) ? euro : 0)
-  }, 0)
-  const volumeOrdini = ordiniConclusi.length
-  const ticketMedio =
-    volumeOrdini > 0 ? fatturato / volumeOrdini : 0
-  const clientiUnici = new Set(
-    ordiniConclusi
-      .map((o) => o.id_cliente)
-      .filter((id): id is number => id != null)
-  )
-  return {
-    fatturato,
-    volumeOrdini,
-    ticketMedio,
-    clientiRicorrenti: clientiUnici.size,
-  }
+function toYMDLocal(d: Date): string {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
 }
 
 function lastMonthStartEnd(): { start: string; end: string } {
@@ -56,15 +30,22 @@ function lastMonthStartEnd(): { start: string; end: string } {
   const start = new Date(end)
   start.setMonth(start.getMonth() - 1)
   return {
-    start: start.toISOString().slice(0, 10),
-    end: end.toISOString().slice(0, 10),
+    start: toYMDLocal(start),
+    end: toYMDLocal(end),
   }
 }
 
 const defaultRange = lastMonthStartEnd()
 
 
-/** Restituisce i filtri per il periodo "precedente" (anno prima / stesso mese anno prima / stesso range anno prima). */
+/** Stesso giorno un anno fa (per confronto “stesso periodo” quando anno/mese in corso). */
+function todayLastYear(): string {
+  const d = new Date()
+  d.setFullYear(d.getFullYear() - 1)
+  return toYMDLocal(d)
+}
+
+/** Restituisce i filtri per il periodo "precedente". Se anno o mese è in corso, confronta stesso periodo (da inizio a oggi vs da inizio a oggi anno prima). */
 function previousPeriodFilters(filters: {
   selectedShop: string | null
   periodMode: PeriodMode
@@ -77,24 +58,30 @@ function previousPeriodFilters(filters: {
   const y = parseInt(filters.selectedYear, 10)
   if (Number.isNaN(y)) return null
   const prevYear = y - 1
+  const now = new Date()
+  const currentYear = now.getFullYear()
+  const currentMonth = String(now.getMonth() + 1).padStart(2, '0')
+
   if (filters.periodMode === 'anno') {
+    const isYearInProgress = y === currentYear
     return {
       ...filters,
       selectedYear: String(prevYear),
       selectedMonth: filters.selectedMonth,
       dateStart: `${prevYear}-01-01`,
-      dateEnd: `${prevYear}-12-31`,
+      dateEnd: isYearInProgress ? todayLastYear() : `${prevYear}-12-31`,
     }
   }
   if (filters.periodMode === 'mese') {
     if (!filters.selectedMonth) return null
+    const isMonthInProgress = y === currentYear && filters.selectedMonth === currentMonth
     const lastDay = new Date(prevYear, parseInt(filters.selectedMonth, 10), 0)
     return {
       ...filters,
       selectedYear: String(prevYear),
       selectedMonth: filters.selectedMonth,
       dateStart: `${prevYear}-${filters.selectedMonth}-01`,
-      dateEnd: lastDay.toISOString().slice(0, 10),
+      dateEnd: isMonthInProgress ? todayLastYear() : toYMDLocal(lastDay),
     }
   }
   const start = new Date(filters.dateStart + 'T12:00:00')
@@ -105,8 +92,8 @@ function previousPeriodFilters(filters: {
     ...filters,
     selectedYear: String(prevYear),
     selectedMonth: filters.selectedMonth,
-    dateStart: start.toISOString().slice(0, 10),
-    dateEnd: end.toISOString().slice(0, 10),
+    dateStart: toYMDLocal(start),
+    dateEnd: toYMDLocal(end),
   }
 }
 
@@ -117,20 +104,28 @@ function deltaPercent(current: number, previous: number): number | null {
 }
 
 export function DashboardPage() {
-  const { user } = useAuth()
+  useAuth()
   const {
     selectedShop,
     loading: profiloLoading,
     error: profiloError,
   } = useProfiloContext()
   const { availableYears, availableMonthsForYear, loading: periodsLoading } = useAvailablePeriods(selectedShop)
-  const { isConcluso, loading: statiLoading } = useStatiOrdini()
 
   const [periodMode, setPeriodMode] = useState<PeriodMode>('anno')
   const [selectedYear, setSelectedYear] = useState<string>('')
   const [selectedMonth, setSelectedMonth] = useState<string>('')
   const [dateStart, setDateStart] = useState(defaultRange.start)
   const [dateEnd, setDateEnd] = useState(defaultRange.end)
+
+  // Filtri interni del box “Andamento fatturato”
+  const [chartMode, setChartMode] = useState<'bar' | 'trend'>('bar')
+  const [chartYears, setChartYears] = useState<number[]>([])
+  const [chartYearsOpen, setChartYearsOpen] = useState(false)
+  const [chartCountries, setChartCountries] = useState<string[]>([])
+  const [chartCountriesOpen, setChartCountriesOpen] = useState(false)
+  const [chartSources, setChartSources] = useState<string[]>([])
+  const [chartSourcesOpen, setChartSourcesOpen] = useState(false)
 
   const selectedYearResolved = selectedYear || (availableYears[0]?.toString() ?? '')
   const monthsForSelectedYear = useMemo(
@@ -145,8 +140,8 @@ export function DashboardPage() {
       periodMode,
       selectedYear: selectedYearResolved,
       selectedMonth: selectedMonthResolved,
-      dateStart,
-      dateEnd,
+      dateStart: periodMode === 'data' ? dateStart : '',
+      dateEnd: periodMode === 'data' ? dateEnd : '',
     }),
     [selectedShop, periodMode, selectedYearResolved, selectedMonthResolved, dateStart, dateEnd]
   )
@@ -156,15 +151,165 @@ export function DashboardPage() {
   )
   const { kpis: kpisFromRpc, loading: kpisRpcLoading, error: kpisRpcError } = useKpisPeriodo(ordiniFilters)
   const { kpis: kpisPrevious } = useKpisPeriodo(previousFilters)
-  const { ordini, loading: ordiniLoading, error: ordiniError } = useOrdini(ordiniFilters)
 
-  const ordiniConclusi = useMemo(
-    () => ordini.filter((o) => isConcluso(o.stato_ordine ?? null)),
-    [ordini, isConcluso]
-  )
+  // default anni grafico: ultimo anno disponibile (nessun confronto)
+  useEffect(() => {
+    if (availableYears.length === 0) return
+    if (chartYears.length === 0) {
+      setChartYears([availableYears[0]])
+      return
+    }
+    const valid = chartYears.filter((y) => availableYears.includes(y))
+    if (valid.length !== chartYears.length) {
+      setChartYears(valid.length > 0 ? valid : [availableYears[0]])
+    }
+  }, [availableYears, chartYears])
 
-  const kpisClient = computeKpis(ordiniConclusi)
-  const kpis = kpisFromRpc ?? kpisClient
+  const effectiveChartYears = useMemo(() => {
+    if (availableYears.length === 0) return []
+    const ys = chartYears.length > 0 ? chartYears : [availableYears[0]]
+    return Array.from(new Set(ys)).sort((a, b) => b - a)
+  }, [availableYears, chartYears])
+
+  const baseChartYear = effectiveChartYears.length > 0 ? Math.max(...effectiveChartYears) : null
+  const {
+    rows: chartAggRows,
+    loading: ordiniChartLoading,
+    error: ordiniChartError,
+  } = useFatturatoChartAgg({ selectedShop, years: effectiveChartYears })
+
+  const availableCountries = useMemo(() => {
+    const set = new Set<string>()
+    chartAggRows.forEach((r) => set.add(r.paese))
+    return Array.from(set).sort((a, b) => a.localeCompare(b, 'it'))
+  }, [chartAggRows])
+
+  const availableSources = useMemo(() => {
+    const set = new Set<string>()
+    chartAggRows.forEach((r) => set.add(r.sorgente))
+    return Array.from(set).sort((a, b) => a.localeCompare(b, 'it'))
+  }, [chartAggRows])
+
+  useEffect(() => {
+    setChartCountries((prev) => prev.filter((c) => availableCountries.includes(c)))
+  }, [availableCountries])
+
+  useEffect(() => {
+    setChartSources((prev) => prev.filter((s) => availableSources.includes(s)))
+  }, [availableSources])
+
+  const ordiniChartFiltered = useMemo(() => {
+    const selectedCountrySet = new Set(chartCountries)
+    const selectedSourceSet = new Set(chartSources)
+    return chartAggRows.filter((r) => {
+      const okCountry = selectedCountrySet.size === 0 ? true : selectedCountrySet.has(r.paese)
+      const okSource = selectedSourceSet.size === 0 ? true : selectedSourceSet.has(r.sorgente)
+      return okCountry && okSource
+    })
+  }, [chartAggRows, chartCountries, chartSources])
+
+  const colors = ['#2563EB', '#10B981', '#F59E0B', '#EC4899', '#8B5CF6', '#22C55E', '#06B6D4']
+
+  const trendSeries = useMemo(() => {
+    const byYearMonth = new Map<string, number>()
+    ordiniChartFiltered.forEach((r) => {
+      const y = Number(r.year)
+      const m = Number(r.month)
+      if (!Number.isFinite(y) || !Number.isFinite(m)) return
+      const key = `${y}-${String(m).padStart(2, '0')}`
+      const v = Number(r.fatturato) || 0
+      byYearMonth.set(key, (byYearMonth.get(key) ?? 0) + v)
+    })
+
+    return effectiveChartYears.map((y, idx) => {
+      const values = Array.from({ length: 12 }, (_, i) => {
+        const key = `${y}-${String(i + 1).padStart(2, '0')}`
+        return byYearMonth.get(key) ?? 0
+      })
+      return { label: `Anno ${y}`, color: colors[idx % colors.length], values }
+    })
+  }, [effectiveChartYears, ordiniChartFiltered])
+
+  const barData = useMemo(() => {
+    if (effectiveChartYears.length === 0) return []
+
+    const selectedCountrySet = new Set(chartCountries)
+    const useExplicitCountries = selectedCountrySet.size > 0
+
+    // Determina i paesi da visualizzare come stack:
+    // - se l'utente ha selezionato paesi specifici: usa quelli
+    // - altrimenti: top N paesi per fatturato (sui dati filtrati e sugli anni selezionati) + Altro
+    const totalsByCountry = new Map<string, number>()
+    ordiniChartFiltered.forEach((r) => {
+      const country = r.paese
+      const v = Number(r.fatturato) || 0
+      totalsByCountry.set(country, (totalsByCountry.get(country) ?? 0) + v)
+    })
+
+    const maxStacks = 6
+    const allCountriesByTotal = Array.from(totalsByCountry.entries())
+      .sort((a, b) => b[1] - a[1])
+      .map(([c]) => c)
+
+    const stackCountries = useExplicitCountries
+      ? Array.from(selectedCountrySet)
+      : allCountriesByTotal.slice(0, maxStacks)
+
+    const hasOther = !useExplicitCountries && allCountriesByTotal.length > maxStacks
+
+    const colorByCountry = new Map<string, string>()
+    stackCountries.forEach((c, i) => colorByCountry.set(c, colors[(i + 1) % colors.length]))
+    if (hasOther) colorByCountry.set('Altro', '#94A3B8')
+
+    const yearsSorted = effectiveChartYears.slice().sort((a, b) => b - a)
+    const monthBars = Array.from({ length: 12 }, () => new Map<number, Map<string, number>>())
+
+    ordiniChartFiltered.forEach((r) => {
+      const y = Number(r.year)
+      const m = Number(r.month)
+      if (!Number.isFinite(y) || !Number.isFinite(m) || m < 1 || m > 12) return
+      if (!yearsSorted.includes(y)) return
+
+      const v = Number(r.fatturato) || 0
+
+      const rawCountry = r.paese
+      const bucket = useExplicitCountries
+        ? rawCountry
+        : stackCountries.includes(rawCountry)
+          ? rawCountry
+          : hasOther
+            ? 'Altro'
+            : rawCountry
+
+      if (useExplicitCountries && !selectedCountrySet.has(rawCountry)) return
+
+      const monthIdx = m - 1
+      const byYear = monthBars[monthIdx]
+      const byCountry = byYear.get(y) ?? new Map<string, number>()
+      byCountry.set(bucket, (byCountry.get(bucket) ?? 0) + v)
+      byYear.set(y, byCountry)
+    })
+
+    return monthBars.map((byYear, monthIdx) => ({
+      monthIndex: monthIdx,
+      bars: yearsSorted.map((y) => {
+        const mm = byYear.get(y) ?? new Map<string, number>()
+        return {
+          year: y,
+          stacks: Array.from(mm.entries())
+            .map(([key, value]) => ({ key, value, color: colorByCountry.get(key) ?? '#CBD5E1' }))
+            .sort((a, b) => a.key.localeCompare(b.key, 'it')),
+        }
+      }),
+    }))
+  }, [chartCountries, colors, effectiveChartYears, ordiniChartFiltered])
+
+  const kpis = kpisFromRpc ?? {
+    fatturato: 0,
+    volumeOrdini: 0,
+    ticketMedio: 0,
+    clientiRicorrenti: 0,
+  }
 
   const minYear = availableYears.length > 0 ? Math.min(...availableYears) : null
   const hasNoPrevious =
@@ -217,10 +362,9 @@ export function DashboardPage() {
   const loading =
     profiloLoading ||
     periodsLoading ||
-    statiLoading ||
     kpisRpcLoading ||
-    (kpisRpcError != null ? ordiniLoading : false)
-  const error = profiloError ?? ordiniError
+    (kpisFromRpc == null && kpisRpcError == null)
+  const error = profiloError ?? kpisRpcError
 
   return (
     <div className="flex min-h-screen flex-col bg-slate-50">
@@ -453,35 +597,230 @@ export function DashboardPage() {
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-3 text-xs">
-              <select className="h-8 cursor-pointer rounded-full border border-slate-200 bg-slate-50 px-3 text-xs text-slate-700">
-                <option>Nessun confronto</option>
-              </select>
-              <select className="h-8 cursor-pointer rounded-full border border-slate-200 bg-slate-50 px-3 text-xs text-slate-700">
-                <option>Tutti i paesi</option>
-              </select>
-              <select className="h-8 cursor-pointer rounded-full border border-slate-200 bg-slate-50 px-3 text-xs text-slate-700">
-                <option>Tutte le sorgenti</option>
-              </select>
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setChartYearsOpen((v) => !v)}
+                  className="inline-flex h-8 items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 text-xs font-semibold text-slate-700"
+                  aria-label="Seleziona anni"
+                >
+                  {effectiveChartYears.length <= 1 ? 'Nessun confronto' : `${effectiveChartYears.length} selezionati`}
+                  <span className="text-slate-400">▾</span>
+                </button>
+                {chartYearsOpen && (
+                  <div className="absolute left-0 top-10 z-10 w-44 rounded-2xl border border-slate-200 bg-white p-2 shadow-lg shadow-slate-200/70">
+                    <div className="px-2 pb-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">
+                      Anni
+                    </div>
+                    <div className="max-h-44 overflow-auto">
+                      {availableYears.map((y) => {
+                        const checked = effectiveChartYears.includes(y)
+                        return (
+                          <label key={y} className="flex cursor-pointer items-center gap-2 rounded-xl px-2 py-1 text-xs text-slate-700 hover:bg-slate-50">
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={() => {
+                                setChartYears((prev) => {
+                                  const has = prev.includes(y)
+                                  const next = has ? prev.filter((v) => v !== y) : [...prev, y]
+                                  return next
+                                })
+                              }}
+                            />
+                            {y}
+                          </label>
+                        )
+                      })}
+                    </div>
+                    <div className="mt-2 flex justify-end">
+                      <button
+                        type="button"
+                        onClick={() => setChartYearsOpen(false)}
+                        className="rounded-full bg-slate-900 px-3 py-1 text-[11px] font-semibold text-white"
+                      >
+                        Ok
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setChartCountriesOpen((v) => !v)}
+                  className="inline-flex h-8 items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 text-xs font-semibold text-slate-700"
+                  aria-label="Seleziona paesi"
+                >
+                  {chartCountries.length === 0 ? 'Tutti' : `${chartCountries.length} selezionati`}
+                  <span className="text-slate-400">▾</span>
+                </button>
+                {chartCountriesOpen && (
+                  <div className="absolute left-0 top-10 z-10 w-56 rounded-2xl border border-slate-200 bg-white p-2 shadow-lg shadow-slate-200/70">
+                    <div className="flex items-center justify-between px-2 pb-1">
+                      <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">
+                        Paese
+                      </div>
+                      <button
+                        type="button"
+                        className="rounded-full px-2 py-0.5 text-[11px] font-semibold text-slate-600 hover:bg-slate-50"
+                        onClick={() => setChartCountries([])}
+                      >
+                        Tutti
+                      </button>
+                    </div>
+                    <div className="max-h-44 overflow-auto">
+                      {availableCountries.map((c) => {
+                        const checked = chartCountries.includes(c)
+                        return (
+                          <label key={c} className="flex cursor-pointer items-center gap-2 rounded-xl px-2 py-1 text-xs text-slate-700 hover:bg-slate-50">
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={() => {
+                                setChartCountries((prev) => {
+                                  const has = prev.includes(c)
+                                  return has ? prev.filter((v) => v !== c) : [...prev, c]
+                                })
+                              }}
+                            />
+                            {c}
+                          </label>
+                        )
+                      })}
+                    </div>
+                    <div className="mt-2 flex justify-end">
+                      <button
+                        type="button"
+                        onClick={() => setChartCountriesOpen(false)}
+                        className="rounded-full bg-slate-900 px-3 py-1 text-[11px] font-semibold text-white"
+                      >
+                        Ok
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setChartSourcesOpen((v) => !v)}
+                  className="inline-flex h-8 items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 text-xs font-semibold text-slate-700"
+                  aria-label="Seleziona sorgenti"
+                >
+                  {chartSources.length === 0 ? 'Tutti' : `${chartSources.length} selezionati`}
+                  <span className="text-slate-400">▾</span>
+                </button>
+                {chartSourcesOpen && (
+                  <div className="absolute left-0 top-10 z-10 w-56 rounded-2xl border border-slate-200 bg-white p-2 shadow-lg shadow-slate-200/70">
+                    <div className="flex items-center justify-between px-2 pb-1">
+                      <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">
+                        Sorgente
+                      </div>
+                      <button
+                        type="button"
+                        className="rounded-full px-2 py-0.5 text-[11px] font-semibold text-slate-600 hover:bg-slate-50"
+                        onClick={() => setChartSources([])}
+                      >
+                        Tutti
+                      </button>
+                    </div>
+                    <div className="max-h-44 overflow-auto">
+                      {availableSources.map((s) => {
+                        const checked = chartSources.includes(s)
+                        return (
+                          <label key={s} className="flex cursor-pointer items-center gap-2 rounded-xl px-2 py-1 text-xs text-slate-700 hover:bg-slate-50">
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={() => {
+                                setChartSources((prev) => {
+                                  const has = prev.includes(s)
+                                  return has ? prev.filter((v) => v !== s) : [...prev, s]
+                                })
+                              }}
+                            />
+                            {s}
+                          </label>
+                        )
+                      })}
+                    </div>
+                    <div className="mt-2 flex justify-end">
+                      <button
+                        type="button"
+                        onClick={() => setChartSourcesOpen(false)}
+                        className="rounded-full bg-slate-900 px-3 py-1 text-[11px] font-semibold text-white"
+                      >
+                        Ok
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
               <div className="flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 p-1 text-xs text-slate-600">
-                <button type="button" className="cursor-pointer rounded-full bg-white px-3 py-1 text-xs font-medium text-slate-900 shadow-sm">
+                <button
+                  type="button"
+                  onClick={() => setChartMode('bar')}
+                  className={`cursor-pointer rounded-full px-3 py-1 text-xs font-medium transition-colors ${
+                    chartMode === 'bar' ? 'bg-white text-slate-900 shadow-sm' : 'hover:bg-white'
+                  }`}
+                >
                   Barre
                 </button>
-                <button type="button" className="cursor-pointer rounded-full px-3 py-1 hover:bg-white">
+                <button
+                  type="button"
+                  onClick={() => setChartMode('trend')}
+                  className={`cursor-pointer rounded-full px-3 py-1 text-xs font-medium transition-colors ${
+                    chartMode === 'trend' ? 'bg-white text-slate-900 shadow-sm' : 'hover:bg-white'
+                  }`}
+                >
                   Trend
                 </button>
               </div>
             </div>
           </div>
 
-          <div className="mt-6 h-52 rounded-2xl border border-dashed border-slate-200 bg-slate-50/60" />
+          {ordiniChartError && (
+            <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+              {ordiniChartError}
+            </div>
+          )}
+
+          <div className="mt-6 rounded-2xl border border-slate-100 bg-white">
+            <div className="px-3 pt-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">
+              {chartMode === 'bar'
+                ? baseChartYear
+                  ? `Anno ${baseChartYear} • dettaglio per mese`
+                  : '—'
+                : 'Trend mensile per anno selezionato'}
+            </div>
+            <div className="px-2 pb-2 pt-2">
+              {ordiniChartLoading ? (
+                <div className="h-52 rounded-2xl border border-dashed border-slate-200 bg-slate-50/60" />
+              ) : (
+                <FatturatoChart mode={chartMode} barData={barData} trendSeries={trendSeries} />
+              )}
+            </div>
+            {chartMode === 'trend' && (
+              <div className="flex flex-wrap items-center gap-4 px-4 pb-3 text-xs text-slate-500">
+                {trendSeries.map((s) => (
+                  <div key={s.label} className="inline-flex items-center gap-2">
+                    <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: s.color }} />
+                    <span className="font-semibold">{s.label}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
 
           <p className="mt-3 text-[11px] text-slate-400">
             Grafico basato su ordini conclusi (shop selezionato:{' '}
             <span className="font-semibold text-slate-500">
               {selectedShop ?? '—'}
             </span>
-            ). Qui puoi aggiungere confronto anni/nazioni quando
-            vorrai.
+            ).
           </p>
         </section>
       </main>
