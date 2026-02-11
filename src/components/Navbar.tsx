@@ -1,8 +1,10 @@
 import { useState } from 'react'
 import { useAuth } from '../context/AuthContext'
+import { useProfiloContext } from '../context/ProfiloContext'
 
 export function Navbar() {
   const { user, signOut } = useAuth()
+  const { shops, hasMultipleShops, selectedShop, setSelectedShop } = useProfiloContext()
   const [menuOpen, setMenuOpen] = useState(false)
 
   const handleLogout = async () => {
@@ -35,7 +37,21 @@ export function Navbar() {
           </div>
         </nav>
 
-        <div className="flex items-center justify-end gap-4">
+        <div className="flex items-center justify-end gap-3">
+          {user && hasMultipleShops && (
+            <select
+              value={selectedShop ?? ''}
+              onChange={(e) => setSelectedShop(e.target.value || null)}
+              className="h-9 cursor-pointer rounded-full border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-200"
+              aria-label="Seleziona shop"
+            >
+              {shops.map((s) => (
+                <option key={s} value={s}>
+                  {s}
+                </option>
+              ))}
+            </select>
+          )}
           {user && (
             <div
               className="relative"

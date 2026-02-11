@@ -34,10 +34,11 @@ export function useStatiOrdini() {
   }, [])
 
   const getLabel = (statoOrdine: string | null): string | null => {
-    if (!statoOrdine) return null
+    if (statoOrdine == null || String(statoOrdine).trim() === '') return null
+    const normalized = String(statoOrdine).trim().toLowerCase()
     const row = stati.find((s) =>
-      s.nomi_stati.some(
-        (n) => n.toLowerCase() === statoOrdine.toLowerCase()
+      (s.nomi_stati ?? []).some(
+        (n) => String(n).trim().toLowerCase() === normalized
       )
     )
     return row?.label_stati ?? null

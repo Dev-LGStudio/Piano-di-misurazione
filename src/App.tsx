@@ -1,5 +1,6 @@
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import { AuthProvider, useAuth } from './context/AuthContext'
+import { ProfiloProvider } from './context/ProfiloContext'
 import { LoginPage } from './pages/LoginPage'
 import { DashboardPage } from './pages/DashboardPage'
 
@@ -27,6 +28,7 @@ function App() {
   return (
     <AuthProvider>
       <BrowserRouter>
+        <ProfiloProvider>
         <Routes>
           <Route path="/login" element={<LoginPage />} />
           <Route
@@ -39,6 +41,7 @@ function App() {
           />
           <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Routes>
+        </ProfiloProvider>
       </BrowserRouter>
     </AuthProvider>
   )

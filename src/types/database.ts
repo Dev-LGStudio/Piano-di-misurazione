@@ -27,7 +27,8 @@ export type Ordine = {
   stato_ordine: string | null
   totale_tasse_escluse: number | null
   rimborso_tasse_escluse: number | null
-  totale_spese_spedizione: number | null
+  totale_spedizione: number | null
+  conversione_euro: number | null
   valuta: string | null
   shop: string | null
   tipo_cliente: string | null
