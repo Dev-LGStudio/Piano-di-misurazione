@@ -127,6 +127,35 @@ export function DashboardPage() {
   const [chartSources, setChartSources] = useState<string[]>([])
   const [chartSourcesOpen, setChartSourcesOpen] = useState(false)
 
+  // Stati per inizializzazione filtri
+  const [didInitYears, setDidInitYears] = useState(false)
+  const [didInitCountries, setDidInitCountries] = useState(false)
+  const [didInitSources, setDidInitSources] = useState(false)
+
+  // Reset dei filtri e dei flag quando cambia lo shop
+  useEffect(() => {
+    setDidInitYears(false)
+    setDidInitCountries(false)
+    setDidInitSources(false)
+    setChartYears([])
+    setChartCountries([])
+    setChartSources([])
+  }, [selectedShop])
+
+  // Chiude i filtri cliccando fuori
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      const target = e.target as HTMLElement
+      if (!target.closest('.relative')) {
+        setChartYearsOpen(false)
+        setChartCountriesOpen(false)
+        setChartSourcesOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
+
   const selectedYearResolved = selectedYear || (availableYears[0]?.toString() ?? '')
   const monthsForSelectedYear = useMemo(
     () => availableMonthsForYear(parseInt(selectedYearResolved, 10)),
@@ -152,24 +181,27 @@ export function DashboardPage() {
   const { kpis: kpisFromRpc, loading: kpisRpcLoading, error: kpisRpcError } = useKpisPeriodo(ordiniFilters)
   const { kpis: kpisPrevious } = useKpisPeriodo(previousFilters)
 
-  // default anni grafico: ultimo anno disponibile (nessun confronto)
+  // Inizializzazione automatica anni grafico (solo una volta all'inizio)
   useEffect(() => {
-    if (availableYears.length === 0) return
-    if (chartYears.length === 0) {
+    if (!didInitYears && availableYears.length > 0) {
       setChartYears([availableYears[0]])
-      return
+      setDidInitYears(true)
     }
-    const valid = chartYears.filter((y) => availableYears.includes(y))
-    if (valid.length !== chartYears.length) {
-      setChartYears(valid.length > 0 ? valid : [availableYears[0]])
+  }, [availableYears, didInitYears])
+
+  // Mantieni chartYears validi se availableYears cambia (es. cambio shop)
+  useEffect(() => {
+    if (availableYears.length > 0 && chartYears.length > 0) {
+      const valid = chartYears.filter((y) => availableYears.includes(y))
+      if (valid.length !== chartYears.length) {
+        setChartYears(valid)
+      }
     }
   }, [availableYears, chartYears])
 
   const effectiveChartYears = useMemo(() => {
-    if (availableYears.length === 0) return []
-    const ys = chartYears.length > 0 ? chartYears : [availableYears[0]]
-    return Array.from(new Set(ys)).sort((a, b) => b - a)
-  }, [availableYears, chartYears])
+    return Array.from(new Set(chartYears)).sort((a, b) => b - a)
+  }, [chartYears])
 
   const baseChartYear = effectiveChartYears.length > 0 ? Math.max(...effectiveChartYears) : null
   const {
@@ -191,19 +223,44 @@ export function DashboardPage() {
   }, [chartAggRows])
 
   useEffect(() => {
-    setChartCountries((prev) => prev.filter((c) => availableCountries.includes(c)))
+    setChartCountries((prev) => {
+      const filtered = prev.filter((c) => availableCountries.includes(c))
+      if (filtered.length > 0) return filtered
+      if (availableCountries.length > 0) return availableCountries
+      return []
+    })
   }, [availableCountries])
 
   useEffect(() => {
-    setChartSources((prev) => prev.filter((s) => availableSources.includes(s)))
+    setChartSources((prev) => {
+      const filtered = prev.filter((s) => availableSources.includes(s))
+      if (filtered.length > 0) return filtered
+      if (availableSources.length > 0) return availableSources
+      return []
+    })
   }, [availableSources])
+
+  // Inizializzazione automatica (tutti selezionati al primo carico)
+  useEffect(() => {
+    if (!didInitCountries && availableCountries.length > 0) {
+      setChartCountries(availableCountries)
+      setDidInitCountries(true)
+    }
+  }, [availableCountries, didInitCountries])
+
+  useEffect(() => {
+    if (!didInitSources && availableSources.length > 0) {
+      setChartSources(availableSources)
+      setDidInitSources(true)
+    }
+  }, [availableSources, didInitSources])
 
   const ordiniChartFiltered = useMemo(() => {
     const selectedCountrySet = new Set(chartCountries)
     const selectedSourceSet = new Set(chartSources)
     return chartAggRows.filter((r) => {
-      const okCountry = selectedCountrySet.size === 0 ? true : selectedCountrySet.has(r.paese)
-      const okSource = selectedSourceSet.size === 0 ? true : selectedSourceSet.has(r.sorgente)
+      const okCountry = selectedCountrySet.has(r.paese)
+      const okSource = selectedSourceSet.has(r.sorgente)
       return okCountry && okSource
     })
   }, [chartAggRows, chartCountries, chartSources])
@@ -600,17 +657,45 @@ export function DashboardPage() {
               <div className="relative">
                 <button
                   type="button"
-                  onClick={() => setChartYearsOpen((v) => !v)}
+                  onClick={() => {
+                    setChartYearsOpen((v) => !v)
+                    setChartCountriesOpen(false)
+                    setChartSourcesOpen(false)
+                  }}
                   className="inline-flex h-8 items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 text-xs font-semibold text-slate-700"
                   aria-label="Seleziona anni"
                 >
-                  {effectiveChartYears.length <= 1 ? 'Nessun confronto' : `${effectiveChartYears.length} selezionati`}
+                  {effectiveChartYears.length === 0
+                    ? 'Nessun anno'
+                    : effectiveChartYears.length === availableYears.length
+                      ? 'Tutti gli anni'
+                      : effectiveChartYears.length === 1
+                        ? `Anno ${effectiveChartYears[0]}`
+                        : `${effectiveChartYears.length} anni`}
                   <span className="text-slate-400">▾</span>
                 </button>
                 {chartYearsOpen && (
                   <div className="absolute left-0 top-10 z-10 w-44 rounded-2xl border border-slate-200 bg-white p-2 shadow-lg shadow-slate-200/70">
-                    <div className="px-2 pb-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">
-                      Anni
+                    <div className="flex items-center justify-between px-2 pb-1">
+                      <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">
+                        Anni
+                      </div>
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          className="text-[10px] font-semibold text-blue-600 hover:text-blue-700"
+                          onClick={() => setChartYears(availableYears)}
+                        >
+                          Tutti
+                        </button>
+                        <button
+                          type="button"
+                          className="text-[10px] font-semibold text-slate-500 hover:text-slate-600"
+                          onClick={() => setChartYears([])}
+                        >
+                          Nessuno
+                        </button>
+                      </div>
                     </div>
                     <div className="max-h-44 overflow-auto">
                       {availableYears.map((y) => {
@@ -633,15 +718,6 @@ export function DashboardPage() {
                         )
                       })}
                     </div>
-                    <div className="mt-2 flex justify-end">
-                      <button
-                        type="button"
-                        onClick={() => setChartYearsOpen(false)}
-                        className="rounded-full bg-slate-900 px-3 py-1 text-[11px] font-semibold text-white"
-                      >
-                        Ok
-                      </button>
-                    </div>
                   </div>
                 )}
               </div>
@@ -649,11 +725,19 @@ export function DashboardPage() {
               <div className="relative">
                 <button
                   type="button"
-                  onClick={() => setChartCountriesOpen((v) => !v)}
+                  onClick={() => {
+                    setChartCountriesOpen((v) => !v)
+                    setChartYearsOpen(false)
+                    setChartSourcesOpen(false)
+                  }}
                   className="inline-flex h-8 items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 text-xs font-semibold text-slate-700"
                   aria-label="Seleziona paesi"
                 >
-                  {chartCountries.length === 0 ? 'Tutti' : `${chartCountries.length} selezionati`}
+                  {chartCountries.length === 0
+                    ? 'Nessun paese'
+                    : chartCountries.length === availableCountries.length
+                      ? 'Tutti i paesi'
+                      : `${chartCountries.length} paesi`}
                   <span className="text-slate-400">▾</span>
                 </button>
                 {chartCountriesOpen && (
@@ -662,13 +746,22 @@ export function DashboardPage() {
                       <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">
                         Paese
                       </div>
-                      <button
-                        type="button"
-                        className="rounded-full px-2 py-0.5 text-[11px] font-semibold text-slate-600 hover:bg-slate-50"
-                        onClick={() => setChartCountries([])}
-                      >
-                        Tutti
-                      </button>
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          className="text-[10px] font-semibold text-blue-600 hover:text-blue-700"
+                          onClick={() => setChartCountries(availableCountries)}
+                        >
+                          Tutti
+                        </button>
+                        <button
+                          type="button"
+                          className="text-[10px] font-semibold text-slate-500 hover:text-slate-600"
+                          onClick={() => setChartCountries([])}
+                        >
+                          Nessuno
+                        </button>
+                      </div>
                     </div>
                     <div className="max-h-44 overflow-auto">
                       {availableCountries.map((c) => {
@@ -690,15 +783,6 @@ export function DashboardPage() {
                         )
                       })}
                     </div>
-                    <div className="mt-2 flex justify-end">
-                      <button
-                        type="button"
-                        onClick={() => setChartCountriesOpen(false)}
-                        className="rounded-full bg-slate-900 px-3 py-1 text-[11px] font-semibold text-white"
-                      >
-                        Ok
-                      </button>
-                    </div>
                   </div>
                 )}
               </div>
@@ -706,11 +790,19 @@ export function DashboardPage() {
               <div className="relative">
                 <button
                   type="button"
-                  onClick={() => setChartSourcesOpen((v) => !v)}
+                  onClick={() => {
+                    setChartSourcesOpen((v) => !v)
+                    setChartYearsOpen(false)
+                    setChartCountriesOpen(false)
+                  }}
                   className="inline-flex h-8 items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 text-xs font-semibold text-slate-700"
                   aria-label="Seleziona sorgenti"
                 >
-                  {chartSources.length === 0 ? 'Tutti' : `${chartSources.length} selezionati`}
+                  {chartSources.length === 0
+                    ? 'Nessuna sorgente'
+                    : chartSources.length === availableSources.length
+                      ? 'Tutte le sorgenti'
+                      : `${chartSources.length} sorgenti`}
                   <span className="text-slate-400">▾</span>
                 </button>
                 {chartSourcesOpen && (
@@ -719,13 +811,22 @@ export function DashboardPage() {
                       <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">
                         Sorgente
                       </div>
-                      <button
-                        type="button"
-                        className="rounded-full px-2 py-0.5 text-[11px] font-semibold text-slate-600 hover:bg-slate-50"
-                        onClick={() => setChartSources([])}
-                      >
-                        Tutti
-                      </button>
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          className="text-[10px] font-semibold text-blue-600 hover:text-blue-700"
+                          onClick={() => setChartSources(availableSources)}
+                        >
+                          Tutti
+                        </button>
+                        <button
+                          type="button"
+                          className="text-[10px] font-semibold text-slate-500 hover:text-slate-600"
+                          onClick={() => setChartSources([])}
+                        >
+                          Nessuno
+                        </button>
+                      </div>
                     </div>
                     <div className="max-h-44 overflow-auto">
                       {availableSources.map((s) => {
@@ -746,15 +847,6 @@ export function DashboardPage() {
                           </label>
                         )
                       })}
-                    </div>
-                    <div className="mt-2 flex justify-end">
-                      <button
-                        type="button"
-                        onClick={() => setChartSourcesOpen(false)}
-                        className="rounded-full bg-slate-900 px-3 py-1 text-[11px] font-semibold text-white"
-                      >
-                        Ok
-                      </button>
                     </div>
                   </div>
                 )}

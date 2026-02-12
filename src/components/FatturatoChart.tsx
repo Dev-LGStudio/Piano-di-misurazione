@@ -42,7 +42,7 @@ export function FatturatoChart(props: {
   height?: number
   barTitlePrefix?: string
 }) {
-  const { mode, barData, trendSeries, height = 220, barTitlePrefix } = props
+  const { mode, barData, trendSeries, height = 300, barTitlePrefix } = props
 
   const [tooltip, setTooltip] = useState<null | {
     x: number
@@ -144,13 +144,13 @@ export function FatturatoChart(props: {
             onHover={(p) => setTooltip(p)}
           />
         ) : (
-          <TrendLayer
-            series={trendSeries}
-            xForMonth={xForMonth}
-            yForValue={yForValue}
-            padding={padding}
-            onHover={(p) => setTooltip(p)}
-          />
+        <TrendLayer
+          series={trendSeries}
+          xForMonth={xForMonth}
+          yForValue={yForValue}
+          height={height}
+          onHover={(p) => setTooltip(p)}
+        />
         )}
       </svg>
 
@@ -240,7 +240,6 @@ function BarLayer(props: {
                         y={y0}
                         width={barW}
                         height={h}
-                        rx={6}
                         fill={st.color}
                         opacity={0.95}
                       />
@@ -269,10 +268,10 @@ function TrendLayer(props: {
   series: TrendSeries[]
   xForMonth: (i: number) => number
   yForValue: (v: number) => number
-  padding: { top: number; right: number; bottom: number; left: number }
+  height: number
   onHover: (t: { x: number; y: number; title: string; rows: { label: string; value: number; color?: string }[] } | null) => void
 }) {
-  const { series, xForMonth, yForValue, onHover } = props
+  const { series, xForMonth, yForValue, height, onHover } = props
 
   const paths = useMemo(() => {
     return series.map((s) => {
@@ -317,7 +316,7 @@ function TrendLayer(props: {
             })
           }}
         >
-          <rect x={xForMonth(i) - 22} y={0} width={44} height={260} fill="transparent" />
+          <rect x={xForMonth(i) - 22} y={0} width={44} height={height} fill="transparent" />
         </g>
       ))}
     </g>
