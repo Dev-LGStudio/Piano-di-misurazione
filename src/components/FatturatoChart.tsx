@@ -148,6 +148,7 @@ export function FatturatoChart(props: {
           series={trendSeries}
           xForMonth={xForMonth}
           yForValue={yForValue}
+          padding={padding}
           height={height}
           onHover={(p) => setTooltip(p)}
         />
@@ -268,10 +269,34 @@ function TrendLayer(props: {
   series: TrendSeries[]
   xForMonth: (i: number) => number
   yForValue: (v: number) => number
+  padding: { top: number; right: number; bottom: number; left: number }
   height: number
   onHover: (t: { x: number; y: number; title: string; rows: { label: string; value: number; color?: string }[] } | null) => void
 }) {
-  const { series, xForMonth, yForValue, height, onHover } = props
+  const { series, xForMonth, yForValue, padding, height, onHover } = props
+
+  const currentMonthLine = useMemo(() => {
+    const now = new Date()
+    const currentYear = now.getFullYear()
+    const currentMonth = now.getMonth()
+    const hasCurrentYear = series.some((s) => s.label.includes(String(currentYear)))
+
+    if (!hasCurrentYear) return null
+
+    const x = xForMonth(currentMonth)
+    return (
+      <line
+        x1={x}
+        x2={x}
+        y1={padding.top}
+        y2={height - padding.bottom}
+        stroke="#94A3B8"
+        strokeDasharray="4 4"
+        strokeWidth={1.5}
+        opacity={0.6}
+      />
+    )
+  }, [series, xForMonth, padding, height])
 
   const paths = useMemo(() => {
     return series.map((s) => {
@@ -285,6 +310,7 @@ function TrendLayer(props: {
 
   return (
     <g>
+      {currentMonthLine}
       {paths.map((p) => (
         <path
           key={p.label}

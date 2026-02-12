@@ -7,6 +7,7 @@ import { useAvailablePeriods } from '../hooks/useAvailablePeriods'
 import { useKpisPeriodo } from '../hooks/useKpisPeriodo'
 import { type PeriodMode } from '../hooks/useOrdini'
 import { useFatturatoChartAgg } from '../hooks/useFatturatoChartAgg'
+import { useDashboardAgg } from '../hooks/useDashboardAgg'
 
 function formatEuro(n: number): string {
   return new Intl.NumberFormat('it-IT', {
@@ -181,6 +182,37 @@ export function DashboardPage() {
   const { kpis: kpisFromRpc, loading: kpisRpcLoading, error: kpisRpcError } = useKpisPeriodo(ordiniFilters)
   const { kpis: kpisPrevious } = useKpisPeriodo(previousFilters)
 
+  // Calcola dateStart/dateEnd per le card "Vendite per sorgente" e "Top paesi"
+  const dashboardDateRange = useMemo(() => {
+    if (periodMode === 'anno') {
+      const year = parseInt(selectedYearResolved, 10)
+      if (!Number.isFinite(year)) return { start: '', end: '' }
+      return {
+        start: `${year}-01-01`,
+        end: `${year}-12-31`,
+      }
+    }
+    if (periodMode === 'mese') {
+      const year = parseInt(selectedYearResolved, 10)
+      const month = parseInt(selectedMonthResolved, 10)
+      if (!Number.isFinite(year) || !Number.isFinite(month)) return { start: '', end: '' }
+      const lastDay = new Date(year, month, 0).getDate()
+      const m = String(month).padStart(2, '0')
+      const d = String(lastDay).padStart(2, '0')
+      return {
+        start: `${year}-${m}-01`,
+        end: `${year}-${m}-${d}`,
+      }
+    }
+    return { start: dateStart, end: dateEnd }
+  }, [periodMode, selectedYearResolved, selectedMonthResolved, dateStart, dateEnd])
+
+  const { rows: dashboardAggRows } = useDashboardAgg({
+    selectedShop,
+    dateStart: dashboardDateRange.start,
+    dateEnd: dashboardDateRange.end,
+  })
+
   // Inizializzazione automatica anni grafico (solo una volta all'inizio)
   useEffect(() => {
     if (!didInitYears && availableYears.length > 0) {
@@ -264,6 +296,27 @@ export function DashboardPage() {
       return okCountry && okSource
     })
   }, [chartAggRows, chartCountries, chartSources])
+
+  const sourceSummary = useMemo(() => {
+    const totals = new Map<string, number>()
+    dashboardAggRows.forEach((r) => {
+      totals.set(r.sorgente, (totals.get(r.sorgente) ?? 0) + Number(r.fatturato))
+    })
+    return Array.from(totals.entries())
+      .map(([sorgente, fatturato]) => ({ sorgente, fatturato }))
+      .sort((a, b) => b.fatturato - a.fatturato)
+  }, [dashboardAggRows])
+
+  const countrySummary = useMemo(() => {
+    const totals = new Map<string, number>()
+    dashboardAggRows.forEach((r) => {
+      totals.set(r.paese, (totals.get(r.paese) ?? 0) + Number(r.fatturato))
+    })
+    return Array.from(totals.entries())
+      .map(([paese, fatturato]) => ({ paese, fatturato }))
+      .sort((a, b) => b.fatturato - a.fatturato)
+      .slice(0, 5)
+  }, [chartAggRows, chartSources])
 
   const colors = ['#2563EB', '#10B981', '#F59E0B', '#EC4899', '#8B5CF6', '#22C55E', '#06B6D4']
 
@@ -907,14 +960,70 @@ export function DashboardPage() {
             )}
           </div>
 
-          <p className="mt-3 text-[11px] text-slate-400">
-            Grafico basato su ordini conclusi (shop selezionato:{' '}
-            <span className="font-semibold text-slate-500">
-              {selectedShop ?? '—'}
-            </span>
-            ).
-          </p>
         </section>
+
+        <div className="mt-5 grid gap-4 lg:grid-cols-2">
+          <article className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm shadow-slate-200/60">
+            <h3 className="text-sm font-semibold text-slate-900">Vendite per sorgente</h3>
+            <p className="mt-0.5 text-[11px] uppercase tracking-[0.18em] text-slate-400">
+              Intervallo selezionato (sorgenti tutte)
+            </p>
+            <div className="mt-3 space-y-3">
+              {sourceSummary.map((source) => {
+                const percent =
+                  sourceSummary[0]?.fatturato === 0
+                    ? 0
+                    : (source.fatturato / sourceSummary[0].fatturato) * 100
+                return (
+                  <div key={source.sorgente}>
+                    <div className="flex items-center justify-between text-xs font-medium text-slate-600">
+                      <span>{source.sorgente}</span>
+                      <span>{formatEuro(source.fatturato)}</span>
+                    </div>
+                    <div className="mt-1 h-1.5 rounded-full bg-slate-100">
+                      <div
+                        className="h-1.5 rounded-full bg-sky-500"
+                        style={{ width: `${Math.min(percent, 100)}%` }}
+                      />
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </article>
+
+          <article className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm shadow-slate-200/60">
+            <div>
+              <h3 className="text-sm font-semibold text-slate-900">Top paesi per fatturato</h3>
+              <p className="mt-0.5 text-[11px] uppercase tracking-[0.18em] text-slate-400">
+                Riflette il filtro temporale principale
+              </p>
+            </div>
+            <div className="mt-3 space-y-3">
+              {countrySummary.map((country) => (
+                <div key={country.paese}>
+                  <div className="flex items-center justify-between text-xs font-medium text-slate-600">
+                    <span>{country.paese}</span>
+                    <span>{formatEuro(country.fatturato)}</span>
+                  </div>
+                  <div className="mt-1 h-1.5 rounded-full bg-slate-100">
+                    <div
+                      className="h-1.5 rounded-full bg-emerald-500"
+                      style={{
+                        width: `${
+                          Math.min(
+                            (country.fatturato / (countrySummary[0]?.fatturato ?? 1)) * 100,
+                            100,
+                          )
+                        }%`,
+                      }}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </article>
+        </div>
       </main>
     </div>
   )
