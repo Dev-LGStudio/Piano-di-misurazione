@@ -47,6 +47,7 @@ type KpisRow = {
   volume_ordini: number
   fatturato: number
   clienti_distinti: number
+  clienti_ricorrenti: number
 }
 
 /**
@@ -108,7 +109,7 @@ export function useKpisPeriodo(filters: OrdiniFilters) {
           volumeOrdini: volume,
           fatturato,
           ticketMedio: volume > 0 ? fatturato / volume : 0,
-          clientiRicorrenti: Number(row.clienti_distinti) || 0,
+          clientiRicorrenti: Number(row.clienti_ricorrenti) || 0,
         })
       })
 

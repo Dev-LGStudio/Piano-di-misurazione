@@ -3,6 +3,8 @@ import { AuthProvider, useAuth } from './context/AuthContext'
 import { ProfiloProvider } from './context/ProfiloContext'
 import { LoginPage } from './pages/LoginPage'
 import { DashboardPage } from './pages/DashboardPage'
+import { OrdiniPage } from './pages/OrdiniPage'
+import { ProdottiPage } from './pages/ProdottiPage'
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth()
@@ -39,6 +41,22 @@ function App() {
               </ProtectedRoute>
             }
           />
+        <Route
+          path="/ordini"
+          element={
+            <ProtectedRoute>
+              <OrdiniPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/prodotti"
+          element={
+            <ProtectedRoute>
+              <ProdottiPage />
+            </ProtectedRoute>
+          }
+        />
           <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Routes>
         </ProfiloProvider>

@@ -105,6 +105,9 @@ function deltaPercent(current: number, previous: number): number | null {
 }
 
 export function DashboardPage() {
+  useEffect(() => {
+    document.title = "Dashboard - Piano di Misurazione";
+  }, []);
   useAuth()
   const {
     selectedShop,

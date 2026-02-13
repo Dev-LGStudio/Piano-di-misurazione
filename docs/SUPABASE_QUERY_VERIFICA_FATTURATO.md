@@ -22,7 +22,8 @@ Per avere gli **stessi numeri** dell’app (volume, fatturato, clienti) puoi usa
 Crea in Supabase (**SQL Editor** → New query) questa funzione. Quando la chiami **dall’app** (con `supabase.rpc('get_kpis_periodo', { ... })`) usa i permessi dell’utente, quindi la RLS su `ordini` si applica e i risultati coincidono con le card.
 
 ```sql
--- KPI periodo: volume ordini conclusi, fatturato, clienti distinti. Stessa logica dell’app, con RLS.
+-- KPI periodo: volume ordini conclusi, fatturato, clienti distinti e clienti ricorrenti.
+-- La funzione restituisce anche il numero di clienti con più di un ordine nello stesso intervallo.
 create or replace function public.get_kpis_periodo(
   p_shop text,
   p_data_inizio date,
@@ -31,7 +32,8 @@ create or replace function public.get_kpis_periodo(
 returns table (
   volume_ordini bigint,
   fatturato numeric,
-  clienti_distinti bigint
+  clienti_distinti bigint,
+  clienti_ricorrenti bigint
 )
 language sql stable
 security invoker
@@ -55,14 +57,24 @@ as $$
         select 1 from concluso_nomi c
         where lower(trim(c.nome::text)) = lower(trim(coalesce(o.stato_ordine, '')))
       )
+  ),
+  clienti_ordini as (
+    select
+      id_cliente,
+      count(*) as ordini_tot
+    from ordini_conclusi
+    group by id_cliente
   )
   select
     count(*)::bigint,
     coalesce(sum(euro_usato), 0),
-    count(distinct id_cliente)::bigint
-  from ordini_conclusi;
+    count(distinct id_cliente)::bigint,
+    count(*) filter (where ordini_tot > 1)::bigint
+  from ordini_conclusi
+  join clienti_ordini using (id_cliente);
 $$;
 ```
+
 
 **Chiamata dall’app** (es. per anno 2024 e shop selezionato):
 
@@ -72,7 +84,7 @@ const { data, error } = await supabase.rpc('get_kpis_periodo', {
   p_data_inizio: '2024-01-01',
   p_data_fine: '2024-12-31',
 })
-// data[0] => { volume_ordini: 940, fatturato: ..., clienti_distinti: ... }
+// data[0] => { volume_ordini: 940, fatturato: ..., clienti_distinti: ..., clienti_ricorrenti: ... }
 ```
 
 I filtri (shop, date inizio/fine) vanno impostati in base alla modalità periodo: **anno** → `yyyy-01-01` / `yyyy-12-31`, **mese** → primo / ultimo giorno del mese, **data** → `dateStart` / `dateEnd`.

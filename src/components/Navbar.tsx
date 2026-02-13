@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { NavLink } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { useProfiloContext } from '../context/ProfiloContext'
 
@@ -28,12 +29,26 @@ export function Navbar() {
         </div>
 
         <nav className="hidden justify-center md:flex">
-          <div className="inline-flex items-center gap-6 text-sm font-medium text-slate-500">
-            <button type="button" className="cursor-pointer border-b-2 border-blue-600 pb-1 text-slate-900">
-              Dashboard
-            </button>
-            <button type="button" className="cursor-pointer pb-1 hover:text-slate-800">Ordini</button>
-            <button type="button" className="cursor-pointer pb-1 hover:text-slate-800">Prodotti</button>
+          <div className="inline-flex items-center gap-6 text-sm font-medium">
+            {[
+              { to: '/dashboard', label: 'Dashboard' },
+              { to: '/ordini', label: 'Ordini' },
+              { to: '/prodotti', label: 'Prodotti' },
+            ].map((item) => (
+              <NavLink
+                key={item.to}
+                to={item.to}
+                className={({ isActive }) =>
+                  `cursor-pointer pb-1 transition-colors ${
+                    isActive
+                      ? 'border-b-2 border-blue-600 text-slate-900'
+                      : 'text-slate-500 hover:text-slate-800'
+                  }`
+                }
+              >
+                {item.label}
+              </NavLink>
+            ))}
           </div>
         </nav>
 
