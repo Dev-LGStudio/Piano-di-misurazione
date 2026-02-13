@@ -18,6 +18,18 @@ function formatEuro(n: number): string {
   }).format(n)
 }
 
+function formatPercent(value: number): string {
+  return new Intl.NumberFormat('it-IT', {
+    style: 'percent',
+    minimumFractionDigits: 1,
+    maximumFractionDigits: 1,
+  }).format(value)
+}
+
+function formatNumber(value: number): string {
+  return new Intl.NumberFormat('it-IT').format(value)
+}
+
 function toYMDLocal(d: Date): string {
   const y = d.getFullYear()
   const m = String(d.getMonth() + 1).padStart(2, '0')
@@ -210,10 +222,27 @@ export function DashboardPage() {
     return { start: dateStart, end: dateEnd }
   }, [periodMode, selectedYearResolved, selectedMonthResolved, dateStart, dateEnd])
 
+  const previousDashboardRange = useMemo(() => {
+    if (!previousFilters.selectedShop) return null
+    const { dateStart: prevStart, dateEnd: prevEnd } = previousFilters
+    if (!prevStart || !prevEnd) return null
+    return {
+      selectedShop: previousFilters.selectedShop,
+      dateStart: prevStart,
+      dateEnd: prevEnd,
+    }
+  }, [previousFilters])
+
   const { rows: dashboardAggRows } = useDashboardAgg({
     selectedShop,
     dateStart: dashboardDateRange.start,
     dateEnd: dashboardDateRange.end,
+  })
+
+  const { rows: previousDashboardAggRows } = useDashboardAgg({
+    selectedShop: previousDashboardRange?.selectedShop ?? null,
+    dateStart: previousDashboardRange?.dateStart ?? '',
+    dateEnd: previousDashboardRange?.dateEnd ?? '',
   })
 
   // Inizializzazione automatica anni grafico (solo una volta all'inizio)
@@ -310,16 +339,53 @@ export function DashboardPage() {
       .sort((a, b) => b.fatturato - a.fatturato)
   }, [dashboardAggRows])
 
-  const countrySummary = useMemo(() => {
-    const totals = new Map<string, number>()
-    dashboardAggRows.forEach((r) => {
-      totals.set(r.paese, (totals.get(r.paese) ?? 0) + Number(r.fatturato))
+  const previousCountryTotals = useMemo(() => {
+    const map = new Map<string, number>()
+    previousDashboardAggRows.forEach((r) => {
+      map.set(r.paese, (map.get(r.paese) ?? 0) + Number(r.fatturato))
     })
-    return Array.from(totals.entries())
-      .map(([paese, fatturato]) => ({ paese, fatturato }))
+    return map
+  }, [previousDashboardAggRows])
+
+  const countrySummary = useMemo(() => {
+    const map = new Map<
+      string,
+      {
+        paese: string
+        fatturato: number
+        ordini: number
+        topMeteo: string | null
+      }
+    >()
+
+    dashboardAggRows.forEach((r) => {
+      const entry = map.get(r.paese) ?? {
+        paese: r.paese,
+        fatturato: 0,
+        ordini: Number(r.ordini) || 0,
+        topMeteo: r.top_meteo ?? null,
+      }
+      entry.fatturato += Number(r.fatturato)
+      if (!entry.ordini) entry.ordini = Number(r.ordini) || entry.ordini
+      entry.topMeteo = entry.topMeteo || r.top_meteo || null
+      map.set(r.paese, entry)
+    })
+
+    return Array.from(map.values())
+      .map((entry) => {
+        const previousFatturato = previousCountryTotals.get(entry.paese) ?? 0
+        const variation = previousFatturato === 0 ? null : (entry.fatturato - previousFatturato) / previousFatturato
+        return {
+          paese: entry.paese,
+          fatturato: entry.fatturato,
+          ordini: entry.ordini,
+          topMeteo: entry.topMeteo ?? '—',
+          variation,
+        }
+      })
       .sort((a, b) => b.fatturato - a.fatturato)
       .slice(0, 5)
-  }, [dashboardAggRows])
+  }, [dashboardAggRows, previousCountryTotals])
 
   const colors = ['#2563EB', '#10B981', '#F59E0B', '#EC4899', '#8B5CF6', '#22C55E', '#06B6D4']
 
@@ -965,8 +1031,8 @@ export function DashboardPage() {
 
         </section>
 
-        <div className="mt-5 grid gap-4 lg:grid-cols-2">
-          <article className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm shadow-slate-200/60">
+        <div className="mt-5 grid gap-4 lg:grid-cols-12">
+          <article className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm shadow-slate-200/60 lg:col-span-4">
             <h3 className="text-sm font-semibold text-slate-900">Vendite per sorgente</h3>
             <p className="mt-0.5 text-[11px] uppercase tracking-[0.18em] text-slate-400">
               Intervallo selezionato (sorgenti tutte)
@@ -995,35 +1061,48 @@ export function DashboardPage() {
             </div>
           </article>
 
-          <article className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm shadow-slate-200/60">
+          <article className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm shadow-slate-200/60 lg:col-span-8">
             <div>
               <h3 className="text-sm font-semibold text-slate-900">Top paesi per fatturato</h3>
               <p className="mt-0.5 text-[11px] uppercase tracking-[0.18em] text-slate-400">
                 Riflette il filtro temporale principale
               </p>
             </div>
-            <div className="mt-3 space-y-3">
-              {countrySummary.map((country) => (
-                <div key={country.paese}>
-                  <div className="flex items-center justify-between text-xs font-medium text-slate-600">
-                    <span>{country.paese}</span>
-                    <span>{formatEuro(country.fatturato)}</span>
-                  </div>
-                  <div className="mt-1 h-1.5 rounded-full bg-slate-100">
+            <div className="mt-3 overflow-hidden rounded-2xl border border-slate-100">
+              <div className="grid grid-cols-[1.5fr_1fr_1fr_1fr_1fr] bg-slate-50 px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">
+                <span>Nazione</span>
+                <span>Meteo tipico</span>
+                <span>Ordini</span>
+                <span>Fatturato</span>
+                <span>Variazione</span>
+              </div>
+              <div className="divide-y divide-slate-100 bg-white">
+                {countrySummary.map((country) => {
+                  const variationLabel =
+                    country.variation == null
+                      ? '—'
+                      : country.variation >= 0
+                        ? `+${formatPercent(country.variation)}`
+                        : formatPercent(country.variation)
+                  const variationClass = country.variation == null
+                    ? 'text-slate-500'
+                    : country.variation >= 0
+                      ? 'text-emerald-600'
+                      : 'text-red-600'
+                  return (
                     <div
-                      className="h-1.5 rounded-full bg-emerald-500"
-                      style={{
-                        width: `${
-                          Math.min(
-                            (country.fatturato / (countrySummary[0]?.fatturato ?? 1)) * 100,
-                            100,
-                          )
-                        }%`,
-                      }}
-                    />
-                  </div>
-                </div>
-              ))}
+                      key={country.paese}
+                      className="grid grid-cols-[1.5fr_1fr_1fr_1fr_1fr] items-center gap-2 px-3 py-3 text-xs font-medium text-slate-600"
+                    >
+                      <span className="text-sm font-semibold text-slate-900">{country.paese}</span>
+                      <span className="text-sm text-slate-700">{country.topMeteo}</span>
+                      <span className="text-sm font-semibold text-slate-900">{formatNumber(country.ordini)}</span>
+                      <span className="text-sm font-semibold text-slate-900">{formatEuro(country.fatturato)}</span>
+                      <span className={`text-sm font-semibold ${variationClass}`}>{variationLabel}</span>
+                    </div>
+                  )
+                })}
+              </div>
             </div>
           </article>
         </div>

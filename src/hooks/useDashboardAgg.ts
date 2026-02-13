@@ -5,6 +5,8 @@ export type DashboardAggRow = {
   paese: string
   sorgente: string
   fatturato: number
+  ordini: number
+  top_meteo: string | null
 }
 
 export function useDashboardAgg(params: {

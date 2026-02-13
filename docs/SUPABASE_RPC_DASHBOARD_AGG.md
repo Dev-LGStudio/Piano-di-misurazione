@@ -13,39 +13,74 @@ Utilizza questa RPC per ottenere i dati aggregati per le card "Vendite per sorge
 ```sql
 create or replace function get_dashboard_agg(
   p_shop text,
-  p_data_inizio text,
-  p_data_fine text
+  p_data_inizio date,
+  p_data_fine date
 )
 returns table(
   paese text,
   sorgente text,
-  fatturato numeric
+  fatturato numeric,
+  ordini bigint,
+  top_meteo text
 )
 language plpgsql
 security invoker
 as $function$
 declare
 begin
-  -- CTE per i nomi degli stati "Concluso"
-  with concluso_nomi as (
-    select lower(trim(coalesce(nome, ''))) as nome_norm
-    from stati_ordini
-    where lower(trim(coalesce(concluso, ''))) = 'concluso'
-  )
   return query
+  with concluso_nomi as (
+    select lower(trim(unnest(nomi_stati)::text)) as nome_norm
+    from public.stati_ordini
+    where lower(trim(label_stati)) = 'concluso'
+  ),
+  ordini_conclusi as (
+    select
+      coalesce(nullif(trim(o.stato), ''), 'N/A') as paese,
+      coalesce(nullif(trim(o.gestione), ''), 'N/A') as sorgente,
+      nullif(trim(o.meteo), '') as meteo,
+      coalesce(o.conversione_euro, 0)::numeric as euro_usato
+    from public.ordini o
+    where lower(trim(o.shop)) ilike lower(trim(p_shop))
+      and o.data_ordine >= p_data_inizio
+      and o.data_ordine <= p_data_fine
+      and exists (
+        select 1 from concluso_nomi cn
+        where cn.nome_norm = lower(trim(coalesce(o.stato_ordine, '')))
+      )
+  ),
+  country_orders as (
+    select oc.paese, count(*)::bigint as ordini
+    from ordini_conclusi oc
+    group by oc.paese
+  ),
+  meteo_counts as (
+    select oc.paese, oc.meteo, count(*) as cnt
+    from ordini_conclusi oc
+    where oc.meteo is not null
+    group by oc.paese, oc.meteo
+  ),
+  top_meteo as (
+    select mc.paese, mc.meteo
+    from (
+      select
+        mc.paese,
+        mc.meteo,
+        row_number() over (partition by mc.paese order by mc.cnt desc) as rn
+      from meteo_counts mc
+    ) mc
+    where mc.rn = 1
+  )
   select
-    coalesce(o.stato, 'N/A') as paese,
-    coalesce(o.gestione, 'N/A') as sorgente,
-    sum(coalesce(o.conversione_euro, 0))::numeric as fatturato
-  from ordini o
-  where o.negozio ilike p_shop
-    and o.data_ordine::date >= p_data_inizio::date
-    and o.data_ordine::date <= p_data_fine::date
-    and exists (
-      select 1 from concluso_nomi cn
-      where cn.nome_norm = lower(trim(coalesce(o.stato_ordine, '')))
-    )
-  group by o.stato, o.gestione
+    o.paese,
+    o.sorgente,
+    sum(o.euro_usato)::numeric as fatturato,
+    coalesce(co.ordini, 0) as ordini,
+    coalesce(tm.meteo, '—') as top_meteo
+  from ordini_conclusi o
+  left join country_orders co on co.paese = o.paese
+  left join top_meteo tm on tm.paese = o.paese
+  group by o.paese, o.sorgente, co.ordini, tm.meteo
   order by fatturato desc;
 end;
 $function$;
@@ -63,6 +98,8 @@ Restituisce una tabella con:
 - `paese` (text): Il paese (colonna `stato` della tabella `ordini`)
 - `sorgente` (text): La sorgente (colonna `gestione` della tabella `ordini`)
 - `fatturato` (numeric): Somma di `conversione_euro` per quel paese/sorgente
+- `ordini` (bigint): Numero di ordini conclusi registrati per quel paese
+- `top_meteo` (text): Meteo più frequente (campo `meteo`) rilevato per quel paese
 
 ### Logica
 1. Trova tutti i nomi degli stati ordine considerati "Concluso" dalla tabella `stati_ordini`
