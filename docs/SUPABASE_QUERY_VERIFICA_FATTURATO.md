@@ -23,7 +23,7 @@ Crea in Supabase (**SQL Editor** → New query) questa funzione. Quando la chiam
 
 ```sql
 -- KPI periodo: volume ordini conclusi, fatturato, clienti distinti e clienti ricorrenti.
--- La funzione restituisce anche il numero di clienti con più di un ordine nello stesso intervallo.
+-- Versione corretta: calcola correttamente il numero di clienti ricorrenti.
 create or replace function public.get_kpis_periodo(
   p_shop text,
   p_data_inizio date,
@@ -38,7 +38,7 @@ returns table (
 language sql stable
 security invoker
 set search_path = public
-as $$
+as $
   with concluso_nomi as (
     select unnest(nomi_stati) as nome
     from public.stati_ordini
@@ -58,21 +58,32 @@ as $$
         where lower(trim(c.nome::text)) = lower(trim(coalesce(o.stato_ordine, '')))
       )
   ),
-  clienti_ordini as (
+  -- Calcola i KPI principali
+  kpis_base as (
     select
-      id_cliente,
-      count(*) as ordini_tot
+      count(*)::bigint as volume_ordini,
+      coalesce(sum(euro_usato), 0) as fatturato,
+      count(distinct id_cliente)::bigint as clienti_distinti
     from ordini_conclusi
-    group by id_cliente
+  ),
+  -- Calcola i clienti ricorrenti (clienti con > 1 ordine nel periodo)
+  ricorrenti as (
+    select count(*)::bigint as numero_ricorrenti
+    from (
+      select 1
+      from ordini_conclusi
+      group by id_cliente
+      having count(*) > 1
+    ) as subquery_ricorrenti
   )
+  -- Unisce i risultati (una riga da kpis_base, una riga da ricorrenti)
   select
-    count(*)::bigint,
-    coalesce(sum(euro_usato), 0),
-    count(distinct id_cliente)::bigint,
-    count(*) filter (where ordini_tot > 1)::bigint
-  from ordini_conclusi
-  join clienti_ordini using (id_cliente);
-$$;
+    k.volume_ordini,
+    k.fatturato,
+    k.clienti_distinti,
+    r.numero_ricorrenti as clienti_ricorrenti
+  from kpis_base k, ricorrenti r;
+$;
 ```
 
 

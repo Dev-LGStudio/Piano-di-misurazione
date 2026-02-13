@@ -319,7 +319,7 @@ export function DashboardPage() {
       .map(([paese, fatturato]) => ({ paese, fatturato }))
       .sort((a, b) => b.fatturato - a.fatturato)
       .slice(0, 5)
-  }, [chartAggRows, chartSources])
+  }, [dashboardAggRows])
 
   const colors = ['#2563EB', '#10B981', '#F59E0B', '#EC4899', '#8B5CF6', '#22C55E', '#06B6D4']
 
