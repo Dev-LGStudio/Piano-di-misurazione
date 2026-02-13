@@ -1,0 +1,6 @@
+---
+alwaysApply: true
+---
+
+La struttura del database è definita nel file: "db.txt".
+Quando scrivi query SQL o codice backend, LEGGI SEMPRE quel file prima di generare codice per assicurarti che i nomi dei campi siano corretti.

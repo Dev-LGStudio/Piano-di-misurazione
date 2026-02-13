@@ -1,0 +1,143 @@
+Il database è creato con Supabase.
+
+TABELLE DATABASE
+
+CREATE TABLE public.ordini (
+  id bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
+  id_ordine text NOT NULL,
+  data_ordine date,
+  ora_ordine time without time zone,
+  nome_giorno text,
+  stato_ordine text,
+  totale_tasse_escluse numeric,
+  rimborso_tasse_escluse numeric,
+  totale_spedizione numeric,
+  valuta character,
+  conversione_euro numeric,
+  voucher text,
+  tipo_pagamento text,
+  shop text,
+  tipo_cliente text,
+  id_cliente text,
+  citta text,
+  provincia text,
+  stato text,
+  meteo text,
+  gestione text,
+  marketplace text,
+  commissioni_amazon numeric,
+  CONSTRAINT ordini_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.profili (
+  id uuid NOT NULL,
+  shops_abilitati ARRAY,
+  nome text,
+  logo_url text,
+  CONSTRAINT profili_pkey PRIMARY KEY (id),
+  CONSTRAINT admin_users_id_fkey FOREIGN KEY (id) REFERENCES auth.users(id)
+);
+CREATE TABLE public.stati_ordini (
+  id bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
+  label_stati text,
+  nomi_stati ARRAY,
+  CONSTRAINT stati_ordini_pkey PRIMARY KEY (id)
+);
+
+
+FUNCTIONS
+
+- get_available_periods
+ select distinct
+    extract(year from data_ordine)::int as year,
+    extract(month from data_ordine)::int as month
+  from public.ordini
+  where lower(trim(shop)) = lower(trim(p_shop))
+  order by 1 desc, 2;
+
+- get_dashboard_agg
+declare
+begin
+  return query
+  with concluso_nomi as (
+    -- Usiamo UNNEST per espandere l'array 'nomi_stati' in singole righe
+    select distinct lower(trim(stato_singolo)) as nome_norm
+    from stati_ordini,
+    unnest(nomi_stati) as stato_singolo
+    where lower(trim(coalesce(label_stati, ''))) = 'concluso'
+      and stato_singolo is not null
+  )
+  select
+    coalesce(o.stato, 'N/A') as paese,
+    coalesce(o.gestione, 'N/A') as sorgente,
+    sum(coalesce(o.conversione_euro, 0))::numeric as fatturato
+  from ordini o
+  where o.shop ilike p_shop
+    and o.data_ordine::date >= p_data_inizio::date
+    and o.data_ordine::date <= p_data_fine::date
+    and exists (
+      select 1 from concluso_nomi cn
+      where cn.nome_norm = lower(trim(coalesce(o.stato_ordine, '')))
+    )
+  group by o.stato, o.gestione
+  order by fatturato desc;
+end;
+
+- get_fatturato_chart_agg
+
+with concluso_nomi as (
+  select unnest(nomi_stati) as nome
+  from public.stati_ordini
+  where label_stati = 'Concluso'
+),
+conclusi as (
+  select
+    extract(year from o.data_ordine)::int as year,
+    extract(month from o.data_ordine)::int as month,
+    coalesce(nullif(trim(o.stato), ''), '—') as paese,
+    coalesce(nullif(trim(o.gestione), ''), '—') as sorgente,
+    coalesce(o.conversione_euro, 0)::numeric as fatt
+  from public.ordini o
+  where
+    lower(trim(o.shop)) = lower(trim(p_shop))
+    and extract(year from o.data_ordine)::int = any(p_years)
+    and exists (
+      select 1 from concluso_nomi c
+      where lower(trim(c.nome::text)) = lower(trim(coalesce(o.stato_ordine, '')))
+    )
+)
+select
+  year,
+  month,
+  paese,
+  sorgente,
+  sum(fatt) as fatturato
+from conclusi
+group by year, month, paese, sorgente
+order by year desc, month asc, paese asc, sorgente asc;
+
+
+- get_kpis_periodo
+  with concluso_nomi as (
+    select unnest(nomi_stati) as nome
+    from public.stati_ordini
+    where label_stati = 'Concluso'
+  ),
+  ordini_conclusi as (
+    select
+      o.id,
+      o.id_cliente,
+      coalesce(o.conversione_euro, 0) as euro_usato
+    from public.ordini o
+    where lower(trim(o.shop)) = lower(trim(p_shop))
+      and o.data_ordine::date >= p_data_inizio
+      and o.data_ordine::date <= p_data_fine
+      and exists (
+        select 1 from concluso_nomi c
+        where lower(trim(c.nome::text)) = lower(trim(coalesce(o.stato_ordine, '')))
+      )
+  )
+  select
+    count(*)::bigint,
+    coalesce(sum(euro_usato), 0),
+    count(distinct id_cliente)::bigint
+  from ordini_conclusi;

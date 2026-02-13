@@ -1,0 +1,5 @@
+---
+alwaysApply: true
+---
+
+Quando devi ricevere informazioni dal database non usare mai il metodo di salvare i dati nel browser, ma crea le query e se necessiti creiamo le funzioni su Supabase per recuperare i dati che servono-
